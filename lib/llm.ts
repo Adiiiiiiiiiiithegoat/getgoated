@@ -53,7 +53,7 @@ async function callGroq(system: string, prompt: string, schema: z.ZodType, effor
   const body = await res.json();
   if (res.status === 429) {
     // Free tier is 8k tokens/minute: wait it out (a few times) instead of failing.
-    const wait = Number(res.headers.get("retry-after") ?? 20);
+    const wait = Number(res.headers.get("retry-after")) || 20;
     if (waits >= 4 || wait > 90) throw new Error("Groq rate limit hit. Wait a minute and try again.");
     await new Promise((r) => setTimeout(r, (wait + 1) * 1000));
     return callGroq(system, prompt, schema, effort, waits + 1);
@@ -80,7 +80,8 @@ export async function askJSON<S extends z.ZodType>(opts: {
 }): Promise<z.infer<S>> {
   let prompt = opts.prompt;
   let lastError = "";
-  for (let attempt = 0; attempt < (opts.check ? 3 : 2); attempt++) {
+  const attempts = opts.check ? 3 : 2;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const { text, truncated } = await (GROQ ? callGroq : callAnthropic)(opts.system, prompt, opts.schema, opts.effort ?? "medium");
     let parsed: unknown;
     try {
@@ -95,5 +96,5 @@ export async function askJSON<S extends z.ZodType>(opts: {
     // Retry as a fresh single-turn request with the rejected attempt and the reason.
     prompt = `${opts.prompt}\n\n<previous_attempt>\n${text}\n</previous_attempt>\nThat attempt was rejected: ${lastError}\nFix it.`;
   }
-  throw new Error(`LLM returned invalid output twice: ${lastError}`);
+  throw new Error(`LLM returned invalid output ${attempts} times: ${lastError.slice(0, 300)}`);
 }

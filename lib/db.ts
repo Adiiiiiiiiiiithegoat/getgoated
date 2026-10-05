@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS paths (
   UNIQUE (skill, level)
 );
 CREATE TABLE IF NOT EXISTS steps (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, -- never reuse ids: a stale tab must not act on a step created by a re-plan
   path_id INTEGER NOT NULL REFERENCES paths(id) ON DELETE CASCADE,
   stage_idx INTEGER NOT NULL,
   step_idx INTEGER NOT NULL,
@@ -46,6 +46,17 @@ CREATE TABLE IF NOT EXISTS yt_search_cache (query TEXT PRIMARY KEY, ids_json TEX
 CREATE TABLE IF NOT EXISTS yt_video_cache (id TEXT PRIMARY KEY, meta_json TEXT NOT NULL, transcript TEXT, fetched_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS quota_log (date TEXT PRIMARY KEY, units INTEGER NOT NULL DEFAULT 0);
 `);
+
+// One-time migration: DBs created before steps.id was AUTOINCREMENT.
+const stepsSql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'steps'").get() as { sql: string }).sql;
+if (!stepsSql.includes("AUTOINCREMENT")) {
+  db.transaction(() => {
+    db.exec(`ALTER TABLE steps RENAME TO steps_old;
+      ${stepsSql.replace("id INTEGER PRIMARY KEY,", "id INTEGER PRIMARY KEY AUTOINCREMENT,")};
+      INSERT INTO steps SELECT * FROM steps_old;
+      DROP TABLE steps_old;`);
+  })();
+}
 
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); // YouTube quota resets at Pacific midnight
 

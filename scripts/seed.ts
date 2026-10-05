@@ -7,6 +7,10 @@ import { getVideos, QuotaError } from "../lib/youtube";
 const [skillArg, levelArg] = process.argv.slice(2);
 const skills = skillArg ? [canonicalSkill(skillArg)] : CURATED.map((c) => c.name);
 const levels = (levelArg ? [levelArg] : LEVELS) as Level[];
+if (levels.some((l) => !LEVELS.includes(l))) {
+  console.error(`Level must be one of: ${LEVELS.join(", ")}`);
+  process.exit(1);
+}
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 async function main() {

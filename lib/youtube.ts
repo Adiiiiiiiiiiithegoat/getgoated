@@ -1,4 +1,10 @@
-import { YoutubeTranscript } from "youtube-transcript";
+import {
+  YoutubeTranscript,
+  YoutubeTranscriptDisabledError,
+  YoutubeTranscriptNotAvailableError,
+  YoutubeTranscriptNotAvailableLanguageError,
+  YoutubeTranscriptVideoUnavailableError,
+} from "youtube-transcript";
 import { db, logQuota } from "./db";
 
 export type VideoMeta = {
@@ -25,7 +31,7 @@ async function yt(endpoint: string, params: Record<string, string>, units: numbe
   const url = `https://www.googleapis.com/youtube/v3/${endpoint}?${new URLSearchParams({ ...params, key })}`;
   const res = await fetch(url);
   logQuota(units); // YouTube charges failed calls too
-  const body = await res.json();
+  const body = await res.json().catch(() => null); // 5xx pages can be HTML
   if (!res.ok) {
     const reason = body?.error?.errors?.[0]?.reason;
     if (reason === "quotaExceeded" || reason === "dailyLimitExceeded") throw new QuotaError();
@@ -85,15 +91,19 @@ export async function getVideos(ids: string[], fresh = false): Promise<Map<strin
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-/** Timestamped transcript as "[m:ss] text" lines in ~15s blocks, or null. Cached (including misses, as ''). */
+// Errors meaning "this video has no usable English captions": safe to cache as a miss. Anything else (timeout, rate limit) is retried next time.
+const PERMANENT = [YoutubeTranscriptDisabledError, YoutubeTranscriptNotAvailableError, YoutubeTranscriptNotAvailableLanguageError, YoutubeTranscriptVideoUnavailableError];
+
+/** Timestamped transcript as "[m:ss] text" lines in ~15s blocks, or null. Cached (permanent misses as ''). */
 export async function getTranscript(id: string, durationSec: number): Promise<string | null> {
   const row = db.prepare("SELECT transcript FROM yt_video_cache WHERE id = ?").get(id) as { transcript: string | null } | undefined;
   if (row?.transcript != null) return row.transcript || null;
   let text = "";
+  let timer: NodeJS.Timeout | undefined;
   try {
     const segs = await Promise.race([
       YoutubeTranscript.fetchTranscript(id, { lang: "en" }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 10_000)),
+      new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("timeout")), 10_000))),
     ]);
     // The library returns ms for one caption format and seconds for the other.
     const last = segs.at(-1)?.offset ?? 0;
@@ -106,8 +116,11 @@ export async function getTranscript(id: string, durationSec: number): Promise<st
       lines[lines.length - 1] += " " + s.text.replace(/\s+/g, " ");
     }
     text = lines.join("\n");
-  } catch {
-    // flaky scraper / no captions → fall back to metadata
+  } catch (e) {
+    // flaky scraper / no captions → caller falls back to metadata
+    if (!PERMANENT.some((E) => e instanceof E)) return null;
+  } finally {
+    clearTimeout(timer);
   }
   db.prepare("UPDATE yt_video_cache SET transcript = ? WHERE id = ?").run(text, id);
   return text || null;

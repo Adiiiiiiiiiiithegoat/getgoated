@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed": "tsx --env-file-if-exists=.env.local scripts/seed.ts",
     "verify-videos": "tsx --env-file-if-exists=.env.local scripts/verify-videos.ts",
-    "check": "tsx scripts/check.ts"
+    "check": "tsx scripts/check.ts",
+    "e2e": "tsx --env-file-if-exists=.env.local scripts/e2e.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

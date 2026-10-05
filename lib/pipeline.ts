@@ -65,7 +65,7 @@ const StepSchema = z.object({
   looksLike: z.array(z.string()),
   commonMistakes: z.array(z.string()),
   passTest: z.string(),
-  estimatedSessions: z.number().int(),
+  estimatedSessions: z.number(), // not .int(): a "2.5" shouldn't cost a full retry; rounded on display
   safetyNote: z.string().nullable(),
   searchQueries: z.array(z.string()),
 });
@@ -81,7 +81,7 @@ const COACH = "You are an elite, safety-conscious coach who designs progressive 
 // ---------- assessment ----------
 
 export async function getAssessment(skill: string): Promise<Assessment> {
-  const hit = db.prepare("SELECT json FROM assessments WHERE skill = ?").get(skill) as { json: string } | undefined;
+  const hit = db.prepare("SELECT json FROM assessments WHERE skill = ? COLLATE NOCASE").get(skill) as { json: string } | undefined;
   if (hit) return JSON.parse(hit.json);
   const a = await askJSON({
     schema: AssessmentSchema,
@@ -137,13 +137,19 @@ function insertSteps(pathId: number, stageOffset: number, stages: Plan["stages"]
   );
 }
 
+// Case-insensitive so "javelin throw" and "Javelin throw" share one path / assessment.
+const findPath = (skill: string, level: Level) =>
+  (db.prepare("SELECT id FROM paths WHERE skill = ? COLLATE NOCASE AND level = ?").get(skill, level) as { id: number } | undefined)?.id;
+
 /** Returns the path id for skill+level, generating the plan if needed. */
 export async function getOrCreatePath(skill: string, level: Level): Promise<number> {
-  const hit = db.prepare("SELECT id FROM paths WHERE skill = ? AND level = ?").get(skill, level) as { id: number } | undefined;
-  if (hit) return hit.id;
+  const hit = findPath(skill, level);
+  if (hit) return hit;
   const plan = await generatePlan(skill, level);
   const stagesMeta = plan.stages.map(({ name, goal }) => ({ name, goal }));
   return db.transaction(() => {
+    const raced = findPath(skill, level); // a concurrent request may have finished first
+    if (raced) return raced;
     const id = Number(
       db.prepare("INSERT INTO paths (skill, level, curated, plan_json) VALUES (?, ?, ?, ?)").run(skill, level, curatedFor(skill) ? 1 : 0, JSON.stringify({ stages: stagesMeta })).lastInsertRowid,
     );
@@ -163,7 +169,14 @@ export type PathRow = { id: number; skill: string; level: Level; curated: number
 
 const stepsOf = (pathId: number) =>
   db.prepare("SELECT * FROM steps WHERE path_id = ? ORDER BY stage_idx, step_idx").all(pathId) as StepRow[];
-const stepRow = (id: number) => db.prepare("SELECT * FROM steps WHERE id = ?").get(id) as StepRow | undefined;
+function stepRow(id: number): StepRow {
+  const row = db.prepare("SELECT * FROM steps WHERE id = ?").get(id) as StepRow | undefined;
+  if (!row) throw new Error("That step no longer exists (the path was re-planned). Refresh the page.");
+  return row;
+}
+
+/** Path that owns a step; actions use this instead of trusting a client-supplied path id. */
+export const pathOfStep = (stepId: number) => stepRow(stepId).path_id;
 
 export async function getPathView(id: number) {
   const path = db.prepare("SELECT * FROM paths WHERE id = ?").get(id) as PathRow | undefined;
@@ -210,10 +223,10 @@ export function startPath(id: number) {
 // ---------- video selection ----------
 
 const PickSchema = z.object({
-  videoId: z.string(),
-  startSeconds: z.number().int(),
+  videoId: z.string().nullable(), // null = no candidate actually teaches this step
+  startSeconds: z.number(), // rounded before storing
   reason: z.string(),
-  backups: z.array(z.object({ videoId: z.string(), startSeconds: z.number().int() })),
+  backups: z.array(z.object({ videoId: z.string(), startSeconds: z.number() })),
 });
 
 const stepKey = (skill: string, step: Step) => `${skill.toLowerCase()}|${step.title.toLowerCase()}`;
@@ -227,15 +240,22 @@ export function filterCandidates(metas: VideoMeta[], exclude: Set<string>): Vide
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+/** Prefixes the skill name when a query never mentions it ("one handed ball toss drill" found tennis videos for juggling). */
+export function withSkill(query: string, skill: string): string {
+  const words = (s: string) => s.toLowerCase().match(/[a-z0-9]{4,}/g) ?? [];
+  const q = new Set(words(query));
+  return words(skill).some((w) => q.has(w)) ? query : `${skill} ${query}`;
+}
+
 /** Shrinks a "[m:ss] ..." transcript to ~max chars by keeping evenly spaced lines, so the whole video stays covered. */
 export function fitLines(text: string, max: number): string {
   if (text.length <= max) return text;
   const step = Math.ceil(text.length / max);
-  return text.split("\n").filter((_, i) => i % step === 0).join("\n");
+  return text.split("\n").filter((_, i) => i % step === 0).join("\n").slice(0, max); // slice: hard cap if lines are uneven
 }
 
 async function selectVideo(stepId: number) {
-  const row = stepRow(stepId)!;
+  const row = stepRow(stepId);
   const path = db.prepare("SELECT skill FROM paths WHERE id = ?").get(row.path_id) as { skill: string };
   const step = JSON.parse(row.data_json) as Step;
   const disliked = (db.prepare("SELECT video_id FROM video_ratings WHERE step_key = ? AND rating < 0").all(stepKey(path.skill, step)) as { video_id: string }[]).map((r) => r.video_id);
@@ -245,7 +265,7 @@ async function selectVideo(stepId: number) {
   const ids: string[] = [];
   let candidates: VideoMeta[] = [];
   for (const q of step.searchQueries.slice(0, 3)) {
-    for (const id of await searchIds(q)) if (!ids.includes(id)) ids.push(id);
+    for (const id of await searchIds(withSkill(q, path.skill))) if (!ids.includes(id)) ids.push(id);
     const metas = await getVideos(ids);
     candidates = filterCandidates(ids.flatMap((id) => metas.get(id) ?? []), exclude);
     if (candidates.length >= 5) break;
@@ -253,17 +273,17 @@ async function selectVideo(stepId: number) {
   candidates = candidates.slice(0, 5); // keep search-relevance order
   if (!candidates.length) throw new Error(`No suitable videos found for "${step.title}".`);
 
-  const blocks = [];
-  for (const c of candidates) {
-    const transcript = await getTranscript(c.id, c.durationSec);
+  const transcripts = await Promise.all(candidates.map((c) => getTranscript(c.id, c.durationSec))); // parallel: each can take up to 10s
+  const blocks = candidates.map((c, i) => {
+    const transcript = transcripts[i];
     const ch = chapters(c.description);
-    blocks.push(`<candidate id="${c.id}">
+    return `<candidate id="${c.id}">
 title: ${c.title}
 channel: ${c.channel}
 duration: ${fmt(c.durationSec)} (${c.durationSec}s) · views: ${c.views} · likes: ${c.likes}
 ${ch.length ? `chapters:\n${ch.join("\n")}\n` : ""}${transcript ? `transcript${transcript.length > TRANSCRIPT_CHARS ? " (sampled)" : ""}:\n${fitLines(transcript, TRANSCRIPT_CHARS)}` : `no transcript available. description:\n${c.description.slice(0, 1500)}`}
-</candidate>`);
-  }
+</candidate>`;
+  });
   const byId = new Map(candidates.map((c) => [c.id, c]));
   const badStart = (id: string, s: number) => s < 0 || s >= byId.get(id)!.durationSec;
 
@@ -282,36 +302,45 @@ Choose the best candidate for teaching THIS step.
 - Strongly prefer videos that visually demonstrate the technique/drill over talking-head explanations; use transcript cues like "watch", "here's the drill", "let's get in the water".
 - startSeconds = where the demonstration of this step begins (skip intros, sponsor reads, channel plugs). Use transcript timestamps or chapters. 0 only if the demo really starts immediately.
 - videoId must be one of the candidate ids above, copied exactly. Never invent ids.
-- backups: the 2 next-best candidates (different ids) with their own startSeconds.
+- A video about a different sport or activity (e.g. a tennis toss for juggling) does NOT count, however similar the motion. If no candidate actually teaches ${path.skill}, set videoId to null and backups to [].
+- backups: the 2 next-best candidates (different ids) with their own startSeconds; only ones that also teach ${path.skill}.
 - reason: one line on why this video wins for this step.`,
     check: (p) => {
+      if (p.videoId === null) return p.backups.length ? "When videoId is null, backups must be []." : null;
       const ids = [p.videoId, ...p.backups.map((b) => b.videoId)];
       const unknown = ids.filter((id) => !byId.has(id));
       if (unknown.length) return `These ids are not in the candidate set: ${unknown.join(", ")}. Use only: ${[...byId.keys()].join(", ")}.`;
       if (new Set(ids).size !== ids.length) return "videoId and backups must all be different.";
       if (p.backups.length > Math.min(2, byId.size - 1)) return `Give at most ${Math.min(2, byId.size - 1)} backups.`;
-      const bad = [p, ...p.backups].filter((b) => badStart(b.videoId, b.startSeconds));
+      const bad = [{ videoId: p.videoId, startSeconds: p.startSeconds }, ...p.backups].filter((b) => badStart(b.videoId, b.startSeconds));
       return bad.length ? `startSeconds must be ≥0 and less than the video duration (bad: ${bad.map((b) => b.videoId).join(", ")}).` : null;
     },
   });
 
+  if (pick.videoId === null) {
+    // Exclude these so the next attempt reaches further down the search results instead of re-judging the same videos.
+    const seenNow = [...(JSON.parse(row.seen_json) as string[]), ...candidates.map((c) => c.id)];
+    db.prepare("UPDATE steps SET seen_json = ? WHERE id = ?").run(JSON.stringify(seenNow), stepId);
+    throw new Error(`None of the videos found actually teach "${step.title}". Click "Find video" to search further.`);
+  }
   const seen = [...(JSON.parse(row.seen_json) as string[]), pick.videoId];
+  const backups = pick.backups.map((b) => ({ videoId: b.videoId, startSeconds: Math.round(b.startSeconds) }));
   db.prepare("UPDATE steps SET video_id = ?, start_seconds = ?, video_reason = ?, backups_json = ?, seen_json = ? WHERE id = ?").run(
-    pick.videoId, pick.startSeconds, pick.reason, JSON.stringify(pick.backups), JSON.stringify(seen), stepId,
+    pick.videoId, Math.round(pick.startSeconds), pick.reason, JSON.stringify(backups), JSON.stringify(seen), stepId,
   );
 }
 
 const inflight = new Map<number, Promise<void>>();
 /** Selects a video for the step if it has none. Deduplicates concurrent calls. */
-export function ensureVideo(stepId: number): Promise<void> {
-  if (stepRow(stepId)?.video_id) return Promise.resolve();
+export async function ensureVideo(stepId: number): Promise<void> {
+  if (stepRow(stepId).video_id) return;
   if (!inflight.has(stepId)) inflight.set(stepId, selectVideo(stepId).finally(() => inflight.delete(stepId)));
   return inflight.get(stepId)!;
 }
 
 /** Next backup if any, else a fresh selection excluding every video already shown for this step. */
 export async function swapVideo(stepId: number) {
-  const row = stepRow(stepId)!;
+  const row = stepRow(stepId);
   const backups = JSON.parse(row.backups_json) as { videoId: string; startSeconds: number }[];
   const next = backups.shift();
   if (next) {
@@ -325,21 +354,26 @@ export async function swapVideo(stepId: number) {
 }
 
 export async function rateVideo(stepId: number, rating: 1 | -1) {
-  const row = stepRow(stepId)!;
+  const row = stepRow(stepId);
   if (!row.video_id) return;
   const { skill } = db.prepare("SELECT skill FROM paths WHERE id = ?").get(row.path_id) as { skill: string };
   db.prepare("INSERT OR REPLACE INTO video_ratings (step_key, video_id, rating) VALUES (?, ?, ?)").run(stepKey(skill, JSON.parse(row.data_json)), row.video_id, rating);
   if (rating < 0) await swapVideo(stepId);
 }
 
+/** Only the current (first unpassed) step can be passed: progression is strictly in order. */
 export function passStep(stepId: number) {
+  const row = stepRow(stepId);
+  const current = stepsOf(row.path_id).find((r) => r.status !== "passed");
+  if (current?.id !== stepId) throw new Error("Only the current step can be passed. Refresh the page.");
   db.prepare("UPDATE steps SET status = 'passed', passed_at = datetime('now') WHERE id = ?").run(stepId);
 }
 
 // ---------- re-plan ----------
 
 export async function replan(pathId: number, direction: "harder" | "easier") {
-  const path = db.prepare("SELECT * FROM paths WHERE id = ?").get(pathId) as PathRow;
+  const path = db.prepare("SELECT * FROM paths WHERE id = ?").get(pathId) as PathRow | undefined;
+  if (!path) throw new Error("Path not found.");
   const rows = stepsOf(pathId);
   const cur = rows.find((r) => r.status !== "passed");
   if (!cur) return;
@@ -389,7 +423,7 @@ export async function verifyAllVideos(log = console.log) {
     try {
       await swapVideo(r.id);
       // a backup may itself be dead; re-check once
-      const now = stepRow(r.id)!.video_id!;
+      const now = stepRow(r.id).video_id!;
       const nm = (await getVideos([now], true)).get(now);
       if (!nm || !nm.embeddable || nm.privacy !== "public") await selectVideo(r.id);
     } catch (e) {

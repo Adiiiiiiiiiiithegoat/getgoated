@@ -1,7 +1,7 @@
 // Offline self-check for the pure logic: `npx tsx scripts/check.ts`
 import assert from "node:assert";
 import { parseDuration, chapters } from "../lib/youtube";
-import { placeLevel, filterCandidates, canonicalSkill, fitLines } from "../lib/pipeline";
+import { placeLevel, filterCandidates, canonicalSkill, fitLines, withSkill } from "../lib/pipeline";
 import type { VideoMeta } from "../lib/youtube";
 
 assert.equal(parseDuration("PT1H2M3S"), 3723);
@@ -26,4 +26,7 @@ const tr = Array.from({ length: 100 }, (_, i) => `[${i}:00] words words words`).
 const fitted = fitLines(tr, 600);
 assert.ok(fitted.length <= 700 && fitted.startsWith("[0:00]") && fitted.includes("[95:00]")); // spans the whole video
 assert.equal(fitLines("short", 600), "short");
+assert.equal(withSkill("one handed ball toss drill", "Juggling"), "Juggling one handed ball toss drill");
+assert.equal(withSkill("freestyle kick drill", "Freestyle swimming"), "freestyle kick drill");
+assert.equal(withSkill("javelin grip tutorial", "Javelin throw"), "javelin grip tutorial");
 console.log("all checks passed");

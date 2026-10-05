@@ -9,9 +9,11 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "
 
 export default function PathClient({ view, videoError }: { view: PathView; videoError?: string }) {
   const { path, currentId, progress } = view;
-  const [error, setError] = useState(videoError);
+  const [error, setError] = useState<string>();
   const [busy, setBusy] = useState<string>();
   const [, start] = useTransition();
+  // videoError comes from the server render, so it stays current after every action's re-render.
+  const shownError = error ?? videoError;
 
   const run = (label: string, fn: () => Promise<{ error?: string }>) => {
     setBusy(label);
@@ -37,9 +39,9 @@ export default function PathClient({ view, videoError }: { view: PathView; video
         <div className="h-full bg-volt transition-all" style={{ width: `${progress}%` }} />
       </div>
 
-      {(error || busy) && (
-        <div className={`sticky top-2 z-10 mt-4 rounded-xl border p-3 text-sm ${error ? "border-red-500/40 bg-red-950" : "border-volt/40 bg-panel"}`}>
-          {error ?? <span className="animate-pulse">{busy}</span>}
+      {(busy || shownError) && (
+        <div className={`sticky top-2 z-10 mt-4 rounded-xl border p-3 text-sm ${!busy ? "border-red-500/40 bg-red-950" : "border-volt/40 bg-panel"}`}>
+          {busy ? <span className="animate-pulse">{busy}</span> : shownError}
         </div>
       )}
 
@@ -94,17 +96,17 @@ function CurrentStep({ step, pathId, busy, run }: { step: StepV; pathId: number;
             </div>
             {v.reason && <p className="text-xs text-muted">{v.reason}</p>}
             <div className="flex flex-wrap gap-2">
-              <button disabled={busy} className={btn} onClick={() => run("Swapping video…", () => A.swapVideo(pathId, step.id))}>
+              <button disabled={busy} className={btn} onClick={() => run("Swapping video…", () => A.swapVideo(step.id))}>
                 ⇄ Swap video{step.backupsLeft ? ` (${step.backupsLeft})` : ""}
               </button>
-              <button disabled={busy} className={btn} aria-label="Good video" onClick={() => run("Saved 👍", () => A.rateVideo(pathId, step.id, 1))}>👍</button>
-              <button disabled={busy} className={btn} aria-label="Bad video, swap it" onClick={() => run("Finding a better video…", () => A.rateVideo(pathId, step.id, -1))}>👎</button>
+              <button disabled={busy} className={btn} aria-label="Good video" onClick={() => run("Saved 👍", () => A.rateVideo(step.id, 1))}>👍</button>
+              <button disabled={busy} className={btn} aria-label="Bad video, swap it" onClick={() => run("Finding a better video…", () => A.rateVideo(step.id, -1))}>👎</button>
             </div>
           </div>
         </div>
       ) : (
         <div className="flex aspect-video items-center justify-center bg-black text-sm text-muted">
-          <button disabled={busy} className={btn} onClick={() => run("Finding the best demo video…", () => A.ensureVideo(pathId, step.id))}>
+          <button disabled={busy} className={btn} onClick={() => run("Finding the best demo video…", () => A.ensureVideo(step.id))}>
             Find video
           </button>
         </div>
@@ -113,7 +115,7 @@ function CurrentStep({ step, pathId, busy, run }: { step: StepV; pathId: number;
       <div className="space-y-5 p-4">
         <div>
           <h3 className="font-display text-3xl leading-tight font-extrabold uppercase">{d.title}</h3>
-          <p className="text-sm text-muted">{d.why} · ~{d.estimatedSessions} sessions</p>
+          <p className="text-sm text-muted">{d.why} · ~{Math.max(1, Math.round(d.estimatedSessions))} sessions</p>
         </div>
 
         <div>
@@ -138,7 +140,7 @@ function CurrentStep({ step, pathId, busy, run }: { step: StepV; pathId: number;
         <div className="rounded-xl border border-dashed border-volt/60 p-4">
           <div className="font-display text-sm font-semibold tracking-widest text-volt uppercase">Pass test</div>
           <p className="mt-1 text-lg font-medium">{d.passTest}</p>
-          <button disabled={busy} onClick={() => run("Nice. Next step…", () => A.passStep(pathId, step.id))} className="mt-3 w-full rounded-xl bg-volt py-3 font-display text-xl font-extrabold text-ink uppercase disabled:opacity-40">
+          <button disabled={busy} onClick={() => run("Nice. Next step…", () => A.passStep(step.id))} className="mt-3 w-full rounded-xl bg-volt py-3 font-display text-xl font-extrabold text-ink uppercase disabled:opacity-40">
             Passed ✓
           </button>
         </div>

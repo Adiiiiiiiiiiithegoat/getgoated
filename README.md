@@ -42,6 +42,7 @@ Today's usage is shown in the footer (`quota_log` table; resets at midnight Paci
 ```
 npm run verify-videos   # re-check every stored video; swap deleted / private / non-embeddable ones
 npm run check           # offline self-check of the pure logic (filters, placement, parsing)
+npm run e2e             # live end-to-end run (real APIs, ~200 quota units): pick, swap, 👎, pass, re-plan, verify; uses a throwaway Juggling path
 ```
 
 ## Data
