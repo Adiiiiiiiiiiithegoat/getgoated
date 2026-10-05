@@ -17,9 +17,10 @@ Fill in `.env.local`:
 
 | Var | Where to get it |
 |---|---|
-| `ANTHROPIC_API_KEY` | console.anthropic.com → **API Keys** → Create key |
+| `GROQ_API_KEY` | console.groq.com → **API Keys**. If set, Groq is used (default model `openai/gpt-oss-120b`). |
+| `ANTHROPIC_API_KEY` | console.anthropic.com → **API Keys**. Used when `GROQ_API_KEY` is empty. |
 | `YOUTUBE_API_KEY` | console.cloud.google.com → create a project → **APIs & Services → Library** → enable **YouTube Data API v3** → **Credentials → Create credentials → API key**. Restrict it to YouTube Data API v3. |
-| `GG_MODEL` | optional, default `claude-sonnet-5-5` |
+| `GG_MODEL` | optional override; defaults to `openai/gpt-oss-120b` (Groq) or `claude-sonnet-5-5` (Anthropic) |
 
 ```
 npm run dev        # http://localhost:3000
@@ -50,6 +51,6 @@ Everything lives in `data/getgoated.db` (SQLite). Delete it to start over. Table
 ## Code map
 
 - `lib/youtube.ts`: search.list / videos.list / transcripts, all cached; quota logging
-- `lib/llm.ts`: `askJSON`, structured output + zod validation + one retry with the error
+- `lib/llm.ts`: `askJSON` (Groq or Anthropic), JSON-schema output + zod validation + retry with the error
 - `lib/pipeline.ts`: curated outlines, assessment, plan, video picker, swap/rate/re-plan, verify
 - `app/`: home, `/assess`, `/path/[id]`, plus server actions in `app/actions.ts` (keys never reach the browser)

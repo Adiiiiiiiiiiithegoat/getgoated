@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { db } from "./db";
-import { askJSON } from "./llm";
+import { askJSON, TRANSCRIPT_CHARS } from "./llm";
 import { chapters, getTranscript, getVideos, searchIds, type VideoMeta } from "./youtube";
 
 // ---------- curated skills ----------
@@ -227,6 +227,13 @@ export function filterCandidates(metas: VideoMeta[], exclude: Set<string>): Vide
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+/** Shrinks a "[m:ss] ..." transcript to ~max chars by keeping evenly spaced lines, so the whole video stays covered. */
+export function fitLines(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const step = Math.ceil(text.length / max);
+  return text.split("\n").filter((_, i) => i % step === 0).join("\n");
+}
+
 async function selectVideo(stepId: number) {
   const row = stepRow(stepId)!;
   const path = db.prepare("SELECT skill FROM paths WHERE id = ?").get(row.path_id) as { skill: string };
@@ -254,7 +261,7 @@ async function selectVideo(stepId: number) {
 title: ${c.title}
 channel: ${c.channel}
 duration: ${fmt(c.durationSec)} (${c.durationSec}s) · views: ${c.views} · likes: ${c.likes}
-${ch.length ? `chapters:\n${ch.join("\n")}\n` : ""}${transcript ? `transcript:\n${transcript}` : `no transcript available. description:\n${c.description.slice(0, 1500)}`}
+${ch.length ? `chapters:\n${ch.join("\n")}\n` : ""}${transcript ? `transcript${transcript.length > TRANSCRIPT_CHARS ? " (sampled)" : ""}:\n${fitLines(transcript, TRANSCRIPT_CHARS)}` : `no transcript available. description:\n${c.description.slice(0, 1500)}`}
 </candidate>`);
   }
   const byId = new Map(candidates.map((c) => [c.id, c]));
