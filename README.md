@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GetGoated
 
-## Getting Started
+Local, single-user web app: type a physical skill, answer 3–4 placement questions, get a staged path (Foundation → Core → Advanced) where every step has drills, form cues, a measurable pass test, and a real YouTube demo that starts at the right timestamp.
 
-First, run the development server:
+**The LLM never writes a URL or video ID.** It writes search queries, then picks from IDs the YouTube Data API returned. Code rejects any ID outside that candidate set (and any `startSeconds` past the video's end) and retries.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Setup (Windows 11)
+
+Node 20+ required.
+
+```
+npm install
+copy .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Fill in `.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Var | Where to get it |
+|---|---|
+| `ANTHROPIC_API_KEY` | console.anthropic.com → **API Keys** → Create key |
+| `YOUTUBE_API_KEY` | console.cloud.google.com → create a project → **APIs & Services → Library** → enable **YouTube Data API v3** → **Credentials → Create credentials → API key**. Restrict it to YouTube Data API v3. |
+| `GG_MODEL` | optional, default `claude-sonnet-5-5` |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+npm run dev        # http://localhost:3000
+```
 
-## Learn More
+## Seeding the launch skills
 
-To learn more about Next.js, take a look at the following resources:
+```
+npm run seed                                   # all 7 curated skills × 3 levels
+npm run seed -- "Freestyle swimming" beginner  # one path + a review report of every chosen video
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Quota:** YouTube gives 10,000 units/day; a search costs 100. Each step uses 1–3 searches (it stops early once it has 5 good candidates), so one path costs roughly 1,000–2,500 units and the full seed (21 paths) takes **2–4 days of quota**. The seed is resumable: when quota runs out it stops cleanly, and the next run resumes from where it stopped. Paths load instantly once seeded; any step still missing a video gets one the first time you open it.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Today's usage is shown in the footer (`quota_log` table; resets at midnight Pacific).
 
-## Deploy on Vercel
+## Other scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+npm run verify-videos   # re-check every stored video; swap deleted / private / non-embeddable ones
+npm run check           # offline self-check of the pure logic (filters, placement, parsing)
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Data
+
+Everything lives in `data/getgoated.db` (SQLite). Delete it to start over. Tables: `paths`, `steps`, `video_ratings`, `assessments`, `yt_search_cache`, `yt_video_cache` (metadata + transcript), `quota_log`.
+
+## Code map
+
+- `lib/youtube.ts`: search.list / videos.list / transcripts, all cached; quota logging
+- `lib/llm.ts`: `askJSON`, structured output + zod validation + one retry with the error
+- `lib/pipeline.ts`: curated outlines, assessment, plan, video picker, swap/rate/re-plan, verify
+- `app/`: home, `/assess`, `/path/[id]`, plus server actions in `app/actions.ts` (keys never reach the browser)

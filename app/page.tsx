@@ -1,69 +1,85 @@
-import Image from "next/image";
+import Link from "next/link";
+import { CURATED, listMyPaths } from "@/lib/pipeline";
+
+const ICON: Record<string, string> = { "Freestyle swimming": "🏊", "8-ball pool": "🎱", Basketball: "🏀" };
+const assess = (skill: string) => `/assess?skill=${encodeURIComponent(skill)}`;
 
 export default function Home() {
+  const mine = listMyPaths();
+  const lifts = CURATED.filter((c) => c.group === "Gym");
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="space-y-10">
+      <section className="lanes -mx-4 rounded-none px-4 py-8 sm:mx-0 sm:rounded-2xl sm:border sm:border-line">
+        <h1 className="font-display text-5xl leading-none font-extrabold uppercase italic sm:text-6xl">
+          Pick a skill.
+          <br />
+          <span className="text-volt">Earn every level.</span>
+        </h1>
+        <p className="mt-3 max-w-md text-sm text-muted">Staged drills, pass tests, and real coaching videos that jump straight to the demo.</p>
+        <form action="/assess" className="mt-6 flex gap-2">
+          <input
+            name="skill"
+            required
+            placeholder="e.g. freestyle swimming, juggling, kickflip…"
+            className="min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 py-4 text-lg outline-none placeholder:text-muted/70 focus:border-volt"
+          />
+          <button className="rounded-xl bg-volt px-5 font-display text-xl font-extrabold text-ink uppercase">Go</button>
+        </form>
+      </section>
+
+      <section>
+        <h2 className="mb-3 font-display text-xl font-semibold tracking-wide text-muted uppercase">Launch skills</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {CURATED.filter((c) => !c.group).map((c) => (
+            <Link key={c.name} href={assess(c.name)} className="group rounded-2xl border border-line bg-panel p-4 transition hover:border-volt">
+              <div className="text-3xl">{ICON[c.name]}</div>
+              <div className="mt-6 font-display text-2xl leading-tight font-extrabold uppercase group-hover:text-volt">{c.name}</div>
+            </Link>
+          ))}
+          <details className="group/gym rounded-2xl border border-line bg-panel p-4 open:col-span-2 open:border-volt">
+            <summary className="cursor-pointer list-none">
+              <div className="text-3xl">🏋️</div>
+              <div className="mt-6 font-display text-2xl font-extrabold uppercase">
+                Gym <span className="text-sm font-semibold text-muted group-open/gym:hidden">· 4 lifts</span>
+              </div>
+            </summary>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {lifts.map((l) => (
+                <Link key={l.name} href={assess(l.name)} className="rounded-xl border border-line px-3 py-3 font-display text-lg font-semibold uppercase hover:border-volt hover:text-volt">
+                  {l.name}
+                </Link>
+              ))}
+            </div>
+          </details>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </section>
+
+      <section>
+        <h2 className="mb-3 font-display text-xl font-semibold tracking-wide text-muted uppercase">My paths</h2>
+        {mine.length === 0 ? (
+          <p className="text-sm text-muted">Nothing yet. Pick a skill above.</p>
+        ) : (
+          <ul className="space-y-2">
+            {mine.map((p) => (
+              <li key={p.id}>
+                <Link href={`/path/${p.id}`} className="block rounded-xl border border-line bg-panel p-4 hover:border-volt">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-display text-xl font-extrabold uppercase">{p.skill}</span>
+                    <span className="font-display text-xl font-extrabold text-volt">{p.progress}%</span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted capitalize">
+                    {p.level}
+                    {!p.curated && " · uncurated"}
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-line">
+                    <div className="h-full bg-volt" style={{ width: `${p.progress}%` }} />
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
